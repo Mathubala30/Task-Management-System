@@ -1,0 +1,114 @@
+:root {
+  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+
+  --bg: #07111f;
+  --bg-secondary: #0b1728;
+  --card: rgba(15, 32, 53, 0.85);
+
+  --text: #dce8f5;
+  --text-h: #f5faff;
+  --muted: #91a4bb;
+
+  --border: rgba(105, 160, 200, 0.18);
+
+  --accent: #16d9f5;
+  --accent-hover: #00bcd9;
+  --accent-bg: rgba(22, 217, 245, 0.1);
+  --accent-border: rgba(22, 217, 245, 0.4);
+
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.3);
+
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: dark;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(0, 170, 220, 0.09), transparent 30%),
+    radial-gradient(circle at 85% 90%, rgba(25, 90, 180, 0.1), transparent 35%),
+    var(--bg);
+  color: var(--text);
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--text-h);
+  font-family: inherit;
+}
+
+p {
+  margin: 0;
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(22, 217, 245, 0.3);
+  color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #24435c;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+}
