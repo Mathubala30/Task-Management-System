@@ -2,6 +2,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { OAuth2Client } = require("google-auth-library");
+const crypto = require("crypto");
 const db = require("../database");
 
 const {
@@ -48,7 +49,7 @@ const sendLoginResponse = (res, user) => {
 };
 
 
-// REGISTER - ALL NEW USERS GET USER ROLE
+// REGISTER
 router.post("/register", async (req, res) => {
     const { name, email, password } = req.body;
 
@@ -67,18 +68,20 @@ router.post("/register", async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(password, 12);
 
-        const result = db.prepare(`
-            INSERT INTO users (name, email, password, role)
-            VALUES (?, ?, ?, 'user')
-        `).run(
-            name.trim(),
-            email.trim().toLowerCase(),
-            hashedPassword
+        const result = await db.query(
+            `INSERT INTO users (name, email, password, role)
+             VALUES ($1, $2, $3, 'user')
+             RETURNING id`,
+            [
+                name.trim(),
+                email.trim().toLowerCase(),
+                hashedPassword
+            ]
         );
 
         res.status(201).json({
             message: "User registered successfully",
-            userId: result.lastInsertRowid
+            userId: result.rows[0].id
         });
 
     } catch (error) {
@@ -102,9 +105,12 @@ router.post("/login", async (req, res) => {
     }
 
     try {
-        const user = db.prepare(`
-            SELECT * FROM users WHERE email = ?
-        `).get(email.trim().toLowerCase());
+        const result = await db.query(
+            "SELECT * FROM users WHERE email = $1",
+            [email.trim().toLowerCase()]
+        );
+
+        const user = result.rows[0];
 
         if (!user) {
             return res.status(401).json({
@@ -173,48 +179,52 @@ router.post("/google", async (req, res) => {
         const googleId = payload.sub;
         const email = payload.email.toLowerCase();
 
-        let user = db.prepare(`
-            SELECT * FROM users
-            WHERE google_id = ?
-        `).get(googleId);
+        let result = await db.query(
+            "SELECT * FROM users WHERE google_id = $1",
+            [googleId]
+        );
+
+        let user = result.rows[0];
 
         if (!user) {
-            user = db.prepare(`
-                SELECT * FROM users
-                WHERE email = ?
-            `).get(email);
+            result = await db.query(
+                "SELECT * FROM users WHERE email = $1",
+                [email]
+            );
+
+            user = result.rows[0];
 
             if (user) {
-                // Link only an already existing account
-                db.prepare(`
-                    UPDATE users
-                    SET google_id = ?
-                    WHERE id = ?
-                `).run(googleId, user.id);
-
-                user = db.prepare(`
-                    SELECT * FROM users WHERE id = ?
-                `).get(user.id);
-
-            } else {
-                // New Google users always receive normal user role
-                const result = db.prepare(`
-                    INSERT INTO users
-                    (name, email, password, role, google_id)
-                    VALUES (?, ?, ?, 'user', ?)
-                `).run(
-                    payload.name || email.split("@")[0],
-                    email,
-                    await bcrypt.hash(
-                        require("crypto").randomBytes(32).toString("hex"),
-                        12
-                    ),
-                    googleId
+                result = await db.query(
+                    `UPDATE users
+                     SET google_id = $1
+                     WHERE id = $2
+                     RETURNING *`,
+                    [googleId, user.id]
                 );
 
-                user = db.prepare(`
-                    SELECT * FROM users WHERE id = ?
-                `).get(result.lastInsertRowid);
+                user = result.rows[0];
+
+            } else {
+                const hashedPassword = await bcrypt.hash(
+                    crypto.randomBytes(32).toString("hex"),
+                    12
+                );
+
+                result = await db.query(
+                    `INSERT INTO users
+                     (name, email, password, role, google_id)
+                     VALUES ($1, $2, $3, 'user', $4)
+                     RETURNING *`,
+                    [
+                        payload.name || email.split("@")[0],
+                        email,
+                        hashedPassword,
+                        googleId
+                    ]
+                );
+
+                user = result.rows[0];
             }
         }
 
@@ -237,7 +247,7 @@ router.put("/users/:id", verifyToken, async (req, res) => {
 
     if (
         req.user.role !== "admin" &&
-        req.user.id !== Number(id)
+        Number(req.user.id) !== Number(id)
     ) {
         return res.status(403).json({
             message: "You cannot update another user's profile"
@@ -257,9 +267,12 @@ router.put("/users/:id", verifyToken, async (req, res) => {
     }
 
     try {
-        const user = db.prepare(
-            "SELECT * FROM users WHERE id = ?"
-        ).get(id);
+        const result = await db.query(
+            "SELECT * FROM users WHERE id = $1",
+            [id]
+        );
+
+        const user = result.rows[0];
 
         if (!user) {
             return res.status(404).json({
@@ -271,15 +284,16 @@ router.put("/users/:id", verifyToken, async (req, res) => {
             ? await bcrypt.hash(password, 12)
             : user.password;
 
-        db.prepare(`
-            UPDATE users
-            SET name = ?, email = ?, password = ?
-            WHERE id = ?
-        `).run(
-            name.trim(),
-            email.trim().toLowerCase(),
-            newPassword,
-            id
+        await db.query(
+            `UPDATE users
+             SET name = $1, email = $2, password = $3
+             WHERE id = $4`,
+            [
+                name.trim(),
+                email.trim().toLowerCase(),
+                newPassword,
+                id
+            ]
         );
 
         res.json({
@@ -301,15 +315,15 @@ router.get(
     "/users",
     verifyToken,
     verifyAdmin,
-    (req, res) => {
+    async (req, res) => {
         try {
-            const users = db.prepare(`
-                SELECT id, name, email, role
-                FROM users
-                ORDER BY id DESC
-            `).all();
+            const result = await db.query(
+                `SELECT id, name, email, role
+                 FROM users
+                 ORDER BY id DESC`
+            );
 
-            res.json(users);
+            res.json(result.rows);
 
         } catch (error) {
             console.error("Fetch users error:", error);
@@ -327,21 +341,22 @@ router.delete(
     "/users/:id",
     verifyToken,
     verifyAdmin,
-    (req, res) => {
+    async (req, res) => {
         const { id } = req.params;
 
-        if (req.user.id === Number(id)) {
+        if (Number(req.user.id) === Number(id)) {
             return res.status(403).json({
                 message: "You cannot delete your own admin account"
             });
         }
 
         try {
-            const result = db.prepare(
-                "DELETE FROM users WHERE id = ?"
-            ).run(id);
+            const result = await db.query(
+                "DELETE FROM users WHERE id = $1",
+                [id]
+            );
 
-            if (result.changes === 0) {
+            if (result.rowCount === 0) {
                 return res.status(404).json({
                     message: "User not found"
                 });

@@ -5,19 +5,20 @@ const { verifyToken } = require("../authMiddleware");
 const router = express.Router();
 
 // CREATE NOTIFICATION HELPER
-function createNotification(userId, title, message, type = "info") {
-    db.prepare(`
-        INSERT INTO notifications
-        (user_id, title, message, type)
-        VALUES (?, ?, ?, ?)
-    `).run(userId, title, message, type);
+async function createNotification(userId, title, message, type = "info") {
+    await db.query(
+        `INSERT INTO notifications
+         (user_id, title, message, type)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, title, message, type]
+    );
 }
 
 // CREATE TASK
-router.post("/", verifyToken, (req, res) => {
+router.post("/", verifyToken, async (req, res) => {
     try {
         const { title, description, status, due_date } = req.body;
-        const user_id = req.user.id;
+        const userId = req.user.id;
 
         if (!title || !title.trim()) {
             return res.status(400).json({
@@ -27,20 +28,22 @@ router.post("/", verifyToken, (req, res) => {
 
         const taskStatus = status || "Pending";
 
-        const result = db.prepare(`
-            INSERT INTO tasks
-            (title, description, status, user_id, due_date)
-            VALUES (?, ?, ?, ?, ?)
-        `).run(
-            title.trim(),
-            description || "",
-            taskStatus,
-            user_id,
-            due_date || null
+        const result = await db.query(
+            `INSERT INTO tasks
+             (title, description, status, user_id, due_date)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id`,
+            [
+                title.trim(),
+                description || "",
+                taskStatus,
+                userId,
+                due_date || null
+            ]
         );
 
-        createNotification(
-            user_id,
+        await createNotification(
+            userId,
             "New Task Created",
             `Your task "${title.trim()}" has been created successfully.`,
             "success"
@@ -48,11 +51,12 @@ router.post("/", verifyToken, (req, res) => {
 
         res.status(201).json({
             message: "Task created successfully",
-            taskId: result.lastInsertRowid
+            taskId: result.rows[0].id
         });
 
     } catch (error) {
         console.error("Create task error:", error);
+
         res.status(500).json({
             message: "Unable to create task"
         });
@@ -60,18 +64,28 @@ router.post("/", verifyToken, (req, res) => {
 });
 
 // GET LOGGED-IN USER TASKS
-router.get("/", verifyToken, (req, res) => {
-    const tasks = db.prepare(`
-        SELECT * FROM tasks
-        WHERE user_id = ?
-        ORDER BY id DESC
-    `).all(req.user.id);
+router.get("/", verifyToken, async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT * FROM tasks
+             WHERE user_id = $1
+             ORDER BY id DESC`,
+            [req.user.id]
+        );
 
-    res.json(tasks);
+        res.json(result.rows);
+
+    } catch (error) {
+        console.error("Fetch tasks error:", error);
+
+        res.status(500).json({
+            message: "Unable to fetch tasks"
+        });
+    }
 });
 
 // UPDATE TASK
-router.put("/:id", verifyToken, (req, res) => {
+router.put("/:id", verifyToken, async (req, res) => {
     try {
         const { title, description, status, due_date } = req.body;
         const { id } = req.params;
@@ -83,10 +97,13 @@ router.put("/:id", verifyToken, (req, res) => {
             });
         }
 
-        const oldTask = db.prepare(`
-            SELECT * FROM tasks
-            WHERE id = ? AND user_id = ?
-        `).get(id, userId);
+        const oldResult = await db.query(
+            `SELECT * FROM tasks
+             WHERE id = $1 AND user_id = $2`,
+            [id, userId]
+        );
+
+        const oldTask = oldResult.rows[0];
 
         if (!oldTask) {
             return res.status(404).json({
@@ -96,33 +113,28 @@ router.put("/:id", verifyToken, (req, res) => {
 
         const newStatus = status || "Pending";
 
-        const result = db.prepare(`
-            UPDATE tasks
-            SET title = ?,
-                description = ?,
-                status = ?,
-                due_date = ?
-            WHERE id = ? AND user_id = ?
-        `).run(
-            title.trim(),
-            description || "",
-            newStatus,
-            due_date || null,
-            id,
-            userId
+        await db.query(
+            `UPDATE tasks
+             SET title = $1,
+                 description = $2,
+                 status = $3,
+                 due_date = $4
+             WHERE id = $5 AND user_id = $6`,
+            [
+                title.trim(),
+                description || "",
+                newStatus,
+                due_date || null,
+                id,
+                userId
+            ]
         );
-
-        if (result.changes === 0) {
-            return res.status(404).json({
-                message: "Task not found for this user"
-            });
-        }
 
         if (
             oldTask.status !== "Completed" &&
             newStatus === "Completed"
         ) {
-            createNotification(
+            await createNotification(
                 userId,
                 "Task Completed!",
                 `Great work! You completed "${title.trim()}".`,
@@ -136,6 +148,7 @@ router.put("/:id", verifyToken, (req, res) => {
 
     } catch (error) {
         console.error("Update task error:", error);
+
         res.status(500).json({
             message: "Unable to update task"
         });
@@ -143,198 +156,242 @@ router.put("/:id", verifyToken, (req, res) => {
 });
 
 // DELETE TASK
-router.delete("/:id", verifyToken, (req, res) => {
-    const { id } = req.params;
-
-    const result = db.prepare(`
-        DELETE FROM tasks
-        WHERE id = ? AND user_id = ?
-    `).run(id, req.user.id);
-
-    if (result.changes === 0) {
-        return res.status(404).json({
-            message: "Task not found for this user"
-        });
-    }
-
-    res.json({
-        message: "Task deleted successfully"
-    });
-});
-
-// TASKFLOW SMART ASSISTANT
-router.post("/assistant", verifyToken, (req, res) => {
-    const message = (req.body.message || "").trim().toLowerCase();
-    const userId = req.user.id;
-
-    if (!message) {
-        return res.status(400).json({
-            reply: "Please enter a message."
-        });
-    }
-
-    const tasks = db.prepare(`
-        SELECT * FROM tasks
-        WHERE user_id = ?
-        ORDER BY id DESC
-    `).all(userId);
-
-    // MARK TASK AS COMPLETED
-    // Keep this before the general completed-task search.
-    if (message.includes("mark") && message.includes("completed")) {
-        const task = tasks.find(t =>
-            message.includes(t.title.toLowerCase())
+router.delete("/:id", verifyToken, async (req, res) => {
+    try {
+        const result = await db.query(
+            `DELETE FROM tasks
+             WHERE id = $1 AND user_id = $2`,
+            [req.params.id, req.user.id]
         );
 
-        if (!task) {
-            return res.json({
-                reply: "I couldn't find that task. Please enter its exact title."
+        if (result.rowCount === 0) {
+            return res.status(404).json({
+                message: "Task not found for this user"
             });
         }
 
-        if (task.status !== "Completed") {
-            db.prepare(`
-                UPDATE tasks
-                SET status = 'Completed'
-                WHERE id = ? AND user_id = ?
-            `).run(task.id, userId);
+        res.json({
+            message: "Task deleted successfully"
+        });
 
-            createNotification(
-                userId,
-                "Task Completed!",
-                `Great work! You completed "${task.title}".`,
-                "success"
+    } catch (error) {
+        console.error("Delete task error:", error);
+
+        res.status(500).json({
+            message: "Unable to delete task"
+        });
+    }
+});
+
+// TASKFLOW SMART ASSISTANT
+router.post("/assistant", verifyToken, async (req, res) => {
+    try {
+        const message = (req.body.message || "").trim().toLowerCase();
+        const userId = req.user.id;
+
+        if (!message) {
+            return res.status(400).json({
+                reply: "Please enter a message."
+            });
+        }
+
+        const result = await db.query(
+            `SELECT * FROM tasks
+             WHERE user_id = $1
+             ORDER BY id DESC`,
+            [userId]
+        );
+
+        const tasks = result.rows;
+
+        // MARK TASK AS COMPLETED
+        if (message.includes("mark") && message.includes("completed")) {
+            const task = tasks.find(t =>
+                message.includes(t.title.toLowerCase())
             );
+
+            if (!task) {
+                return res.json({
+                    reply: "I couldn't find that task. Please enter its exact title."
+                });
+            }
+
+            if (task.status !== "Completed") {
+                await db.query(
+                    `UPDATE tasks
+                     SET status = 'Completed'
+                     WHERE id = $1 AND user_id = $2`,
+                    [task.id, userId]
+                );
+
+                await createNotification(
+                    userId,
+                    "Task Completed!",
+                    `Great work! You completed "${task.title}".`,
+                    "success"
+                );
+            }
+
+            return res.json({
+                reply: `"${task.title}" marked as completed!`
+            });
+        }
+
+        // SHOW PENDING TASKS
+        if (message.includes("pending")) {
+            const pending = tasks.filter(
+                task => task.status === "Pending"
+            );
+
+            return res.json({
+                reply: pending.length
+                    ? "Here are your pending tasks:"
+                    : "You have no pending tasks!",
+                tasks: pending
+            });
+        }
+
+        // SHOW COMPLETED TASKS
+        if (message.includes("completed")) {
+            const completed = tasks.filter(
+                task => task.status === "Completed"
+            );
+
+            return res.json({
+                reply: completed.length
+                    ? "Here are your completed tasks:"
+                    : "You have no completed tasks yet!",
+                tasks: completed
+            });
+        }
+
+        // SEARCH TASK
+        const matchedTask = tasks.find(t =>
+            message.includes(t.title.toLowerCase())
+        );
+
+        if (matchedTask) {
+            return res.json({
+                reply: `I found your task: ${matchedTask.title}. Status: ${matchedTask.status}.`,
+                tasks: [matchedTask]
+            });
+        }
+
+        // GENERAL TASK SUMMARY
+        if (message.includes("today") || message.includes("suggest")) {
+            const pending = tasks.filter(
+                task => task.status !== "Completed"
+            );
+
+            return res.json({
+                reply: pending.length
+                    ? "Here are your unfinished tasks. You can start with one of these:"
+                    : "Great! All your tasks are completed.",
+                tasks: pending
+            });
         }
 
         return res.json({
-            reply: `"${task.title}" marked as completed!`
+            reply: "I can help you find pending tasks, completed tasks, search tasks, and update task status. Try asking me!"
+        });
+
+    } catch (error) {
+        console.error("Assistant error:", error);
+
+        res.status(500).json({
+            reply: "Unable to process your request."
         });
     }
-
-    // SHOW PENDING TASKS
-    if (message.includes("pending")) {
-        const pending = tasks.filter(
-            task => task.status === "Pending"
-        );
-
-        return res.json({
-            reply: pending.length
-                ? "Here are your pending tasks:"
-                : "You have no pending tasks!",
-            tasks: pending
-        });
-    }
-
-    // SHOW COMPLETED TASKS
-    if (message.includes("completed")) {
-        const completed = tasks.filter(
-            task => task.status === "Completed"
-        );
-
-        return res.json({
-            reply: completed.length
-                ? "Here are your completed tasks:"
-                : "You have no completed tasks yet!",
-            tasks: completed
-        });
-    }
-
-    // SEARCH TASK
-    const matchedTask = tasks.find(t =>
-        message.includes(t.title.toLowerCase())
-    );
-
-    if (matchedTask) {
-        return res.json({
-            reply: `I found your task: ${matchedTask.title}. Status: ${matchedTask.status}.`,
-            tasks: [matchedTask]
-        });
-    }
-
-    // GENERAL TASK SUMMARY
-    if (message.includes("today") || message.includes("suggest")) {
-        const pending = tasks.filter(
-            task => task.status !== "Completed"
-        );
-
-        return res.json({
-            reply: pending.length
-                ? "Here are your unfinished tasks. You can start with one of these:"
-                : "Great! All your tasks are completed.",
-            tasks: pending
-        });
-    }
-
-    return res.json({
-        reply: "I can help you find pending tasks, completed tasks, search tasks, and update task status. Try asking me!"
-    });
 });
 
 // GET SUBTASKS FOR A TASK
-router.get("/:id/subtasks", verifyToken, (req, res) => {
-    const task = db.prepare(`
-        SELECT id FROM tasks
-        WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.user.id);
+router.get("/:id/subtasks", verifyToken, async (req, res) => {
+    try {
+        const taskResult = await db.query(
+            `SELECT id FROM tasks
+             WHERE id = $1 AND user_id = $2`,
+            [req.params.id, req.user.id]
+        );
 
-    if (!task) {
-        return res.status(404).json({
-            message: "Task not found."
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json({
+                message: "Task not found."
+            });
+        }
+
+        const result = await db.query(
+            `SELECT id, task_id, title, is_completed
+             FROM subtasks
+             WHERE task_id = $1 AND user_id = $2
+             ORDER BY id ASC`,
+            [req.params.id, req.user.id]
+        );
+
+        res.json(result.rows);
+
+    } catch (error) {
+        console.error("Fetch subtasks error:", error);
+
+        res.status(500).json({
+            message: "Unable to fetch subtasks."
         });
     }
-
-    const subtasks = db.prepare(`
-        SELECT id, task_id, title, is_completed
-        FROM subtasks
-        WHERE task_id = ? AND user_id = ?
-        ORDER BY id ASC
-    `).all(req.params.id, req.user.id);
-
-    res.json(subtasks);
 });
 
 // UPDATE SUBTASK COMPLETION
-router.patch("/:taskId/subtasks/:subtaskId", verifyToken, (req, res) => {
-    const { taskId, subtaskId } = req.params;
-    const { is_completed } = req.body;
+router.patch("/:taskId/subtasks/:subtaskId", verifyToken, async (req, res) => {
+    try {
+        const { taskId, subtaskId } = req.params;
+        const { is_completed } = req.body;
 
-    if (typeof is_completed !== "boolean") {
-        return res.status(400).json({
-            message: "A valid completion status is required."
+        if (typeof is_completed !== "boolean") {
+            return res.status(400).json({
+                message: "A valid completion status is required."
+            });
+        }
+
+        const result = await db.query(
+            `UPDATE subtasks
+             SET is_completed = $1
+             WHERE id = $2 AND task_id = $3 AND user_id = $4`,
+            [
+                is_completed,
+                subtaskId,
+                taskId,
+                req.user.id
+            ]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({
+                message: "Subtask not found."
+            });
+        }
+
+        const progressResult = await db.query(
+            `SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE is_completed = TRUE) AS completed
+             FROM subtasks
+             WHERE task_id = $1 AND user_id = $2`,
+            [taskId, req.user.id]
+        );
+
+        const progress = progressResult.rows[0];
+
+        res.json({
+            message: "Progress updated successfully!",
+            total: Number(progress.total),
+            completed: Number(progress.completed)
+        });
+
+    } catch (error) {
+        console.error("Update subtask error:", error);
+
+        res.status(500).json({
+            message: "Unable to update subtask progress."
         });
     }
-
-    const result = db.prepare(`
-        UPDATE subtasks
-        SET is_completed = ?
-        WHERE id = ? AND task_id = ? AND user_id = ?
-    `).run(
-        is_completed ? 1 : 0,
-        subtaskId,
-        taskId,
-        req.user.id
-    );
-
-    if (result.changes === 0) {
-        return res.status(404).json({
-            message: "Subtask not found."
-        });
-    }
-
-    const progress = db.prepare(`
-        SELECT
-            COUNT(*) AS total,
-            SUM(is_completed) AS completed
-        FROM subtasks
-        WHERE task_id = ? AND user_id = ?
-    `).get(taskId, req.user.id);
-
-    res.json({
-        message: "Progress updated successfully!",
-        total: progress.total,
-        completed: progress.completed || 0
-    });
 });
 
 module.exports = router;

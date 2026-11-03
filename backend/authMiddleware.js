@@ -1,10 +1,8 @@
 const jwt = require("jsonwebtoken");
 const db = require("./database");
 
-// ================================
 // VERIFY LOGGED-IN USER
-// ================================
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -28,11 +26,14 @@ const verifyToken = (req, res, next) => {
         );
 
         // Check whether the user still exists
-        const user = db.prepare(`
-            SELECT id, name, email, role
-            FROM users
-            WHERE id = ?
-        `).get(decoded.id);
+        const result = await db.query(
+            `SELECT id, name, email, role
+             FROM users
+             WHERE id = $1`,
+            [decoded.id]
+        );
+
+        const user = result.rows[0];
 
         if (!user) {
             return res.status(401).json({
@@ -40,23 +41,21 @@ const verifyToken = (req, res, next) => {
             });
         }
 
-        // Use the latest database details
         req.user = user;
-
         next();
 
     } catch (error) {
+        console.error("Token verification error:", error);
+
         return res.status(401).json({
             message: "Invalid or expired token"
         });
     }
 };
 
-// ================================
-// VERIFY ADMIN
-// ================================
-const verifyAdmin = (req, res, next) => {
 
+// VERIFY ADMIN
+const verifyAdmin = (req, res, next) => {
     if (!req.user || req.user.role !== "admin") {
         return res.status(403).json({
             message: "Admin access only"

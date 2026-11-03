@@ -1,4 +1,3 @@
-
 const express = require("express");
 const Groq = require("groq-sdk");
 const { verifyToken } = require("../authMiddleware");
@@ -108,7 +107,7 @@ function handleAIError(error, res, featureName) {
     });
 }
 
-// Fallback breakdown when the AI service is unavailable
+// FALLBACK BREAKDOWN
 function createFallbackSteps(task) {
     const title = task.title.trim();
     const description = (task.description || "").trim();
@@ -125,32 +124,47 @@ function createFallbackSteps(task) {
     ];
 }
 
-// Save generated steps in the database
-function saveTaskSteps(taskId, userId, steps) {
-    const saveSteps = db.transaction(() => {
-        db.prepare(`
-            DELETE FROM subtasks
-            WHERE task_id = ? AND user_id = ?
-        `).run(taskId, userId);
+// SAVE GENERATED STEPS USING POSTGRESQL TRANSACTION
+async function saveTaskSteps(taskId, userId, steps) {
+    const client = await db.connect();
 
-        const insertStep = db.prepare(`
-            INSERT INTO subtasks (task_id, user_id, title)
-            VALUES (?, ?, ?)
-        `);
+    try {
+        await client.query("BEGIN");
+
+        await client.query(
+            `DELETE FROM subtasks
+             WHERE task_id = $1 AND user_id = $2`,
+            [taskId, userId]
+        );
 
         for (const step of steps) {
-            insertStep.run(taskId, userId, step.trim());
+            await client.query(
+                `INSERT INTO subtasks
+                 (task_id, user_id, title)
+                 VALUES ($1, $2, $3)`,
+                [taskId, userId, step.trim()]
+            );
         }
-    });
 
-    saveSteps();
+        const result = await client.query(
+            `SELECT id, task_id, title, is_completed
+             FROM subtasks
+             WHERE task_id = $1 AND user_id = $2
+             ORDER BY id ASC`,
+            [taskId, userId]
+        );
 
-    return db.prepare(`
-        SELECT id, task_id, title, is_completed
-        FROM subtasks
-        WHERE task_id = ? AND user_id = ?
-        ORDER BY id ASC
-    `).all(taskId, userId);
+        await client.query("COMMIT");
+
+        return result.rows;
+
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+
+    } finally {
+        client.release();
+    }
 }
 
 // AI TUTOR
@@ -213,10 +227,13 @@ router.post("/breakdown", verifyToken, async (req, res) => {
             });
         }
 
-        const task = db.prepare(`
-            SELECT * FROM tasks
-            WHERE id = ? AND user_id = ?
-        `).get(taskId, userId);
+        const taskResult = await db.query(
+            `SELECT * FROM tasks
+             WHERE id = $1 AND user_id = $2`,
+            [taskId, userId]
+        );
+
+        const task = taskResult.rows[0];
 
         if (!task) {
             return res.status(404).json({
@@ -304,7 +321,7 @@ Rules:
             usedFallback = true;
         }
 
-        const savedSteps = saveTaskSteps(
+        const savedSteps = await saveTaskSteps(
             taskId,
             userId,
             steps
