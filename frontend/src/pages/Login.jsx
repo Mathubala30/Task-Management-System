@@ -37,13 +37,14 @@ function Login() {
         }, 1000);
     };
 
+    // Normal Email and Password Login
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
 
         try {
             const response = await fetch(
-                "https://task-management-system-5tpw.onrender.com/api/auth/google",
+                "https://task-management-system-5tpw.onrender.com/api/auth/login",
                 {
                     method: "POST",
                     headers: {
@@ -70,12 +71,13 @@ function Login() {
         }
     };
 
+    // Google Login
     const handleGoogleSuccess = async (credentialResponse) => {
         setLoading(true);
 
         try {
             const response = await fetch(
-              "https://task-management-system-5tpw.onrender.com/api/auth/google" ,
+                "https://task-management-system-5tpw.onrender.com/api/auth/google",
                 {
                     method: "POST",
                     headers: {
@@ -224,7 +226,6 @@ function Login() {
                         <div className="divider">
                             <span>OR CONTINUE WITH</span>
                         </div>
-                        
 
                         <div className="google-login-wrapper">
                             <GoogleLogin
