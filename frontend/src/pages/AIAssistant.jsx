@@ -94,7 +94,7 @@ function AIAssistant() {
 
         try {
             const response = await fetch(
-                "http://localhost:5000/api/ai/chat",
+                "http://https://task-management-system-5tpw.onrender.com/api/ai/chat",
                 {
                     method: "POST",
                     headers: {

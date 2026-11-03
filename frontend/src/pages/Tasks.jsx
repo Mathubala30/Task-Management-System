@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Tasks.css";
 
-const API = "http://localhost:5000/api";
+const API = "http://https://task-management-system-5tpw.onrender.com/api";
 
 function Tasks() {
     const navigate = useNavigate();

@@ -15,7 +15,7 @@ function NotificationBell() {
 
         try {
             const response = await fetch(
-                "http://localhost:5000/api/notifications",
+               " https://task-management-system-5tpw.onrender.com",
                 {
                     method: "GET",
                     cache: "no-store",
@@ -63,7 +63,7 @@ function NotificationBell() {
 
         try {
             const response = await fetch(
-                `http://localhost:5000/api/notifications/${id}/read`,
+                `" https://task-management-system-5tpw.onrender.com/${id}/read`,
                 {
                     method: "PATCH",
                     headers: {
@@ -86,7 +86,7 @@ function NotificationBell() {
 
         try {
             const response = await fetch(
-                "http://localhost:5000/api/notifications/read-all",
+                " https://task-management-system-5tpw.onrender.com",
                 {
                     method: "PATCH",
                     headers: {
@@ -109,7 +109,7 @@ function NotificationBell() {
 
         try {
             const response = await fetch(
-                `http://localhost:5000/api/notifications/${id}`,
+                `https://task-management-system-5tpw.onrender.com/${id}`,
                 {
                     method: "DELETE",
                     headers: {

@@ -22,7 +22,7 @@ function Dashboard() {
 
             try {
                 const response = await fetch(
-                    `http://localhost:5000/api/tasks?user_id=${user.id}`,
+                    `https://task-management-system-5tpw.onrender.com/api/tasks?user_id=${user.id}`,
                     {
                         headers: {
                             Authorization: `Bearer ${token}`
